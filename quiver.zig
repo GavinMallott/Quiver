@@ -35,7 +35,7 @@ pub fn Vertex(comptime T: type) type {
         }
 
         pub fn relations(self: *@This()) void {
-            std.debug.print("Vertex: {s}\n", .{self.repr});
+            std.debug.print("Vertex Relations: {s}\n", .{self.repr});
             for (self.outgoing.items) |relation| {
                 std.debug.print("-> {s}, {s}\n", .{relation.to.repr, relation.label});
             }
@@ -228,13 +228,17 @@ pub fn Quiver(comptime T: type) type {
         }
 
         pub fn removeEdgeByLabel(self: *Self, edge_label: Str) !void {
-            var edge_to_remove: *Edge(T) = undefined;
+            var edge_to_remove: ?*Edge(T) = null;
             for (self.edges.items) |e| {
                 if (std.mem.eql(u8, e.label, edge_label)) {
                     edge_to_remove = e;
                 }
             }
-            try self.removeEdge(edge_to_remove);
+            if (edge_to_remove == null) {
+                std.debug.print("Tried to remove edge by label: {s}\nEdge not found.\n", .{edge_label});
+            } else {
+                try self.removeEdge(edge_to_remove.?);
+            }
         }
 
         pub fn addEdge(self: *Self, from: *Vertex(T), to: *Vertex(T), label: Str) !*Edge(T) {
@@ -339,6 +343,48 @@ test "Basic Impl" {
     q.print();    
 }
 
+test "State Machine" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var ally = gpa.allocator();
+    defer _ = gpa.deinit();
+    var q = Quiver(Str).init(&ally);
+    defer q.deinit();
+
+    const opt: u8 = 0;
+
+    const start: *Vertex(Str) = try q.addVertex("StateStart","Start", opt);
+    start.print();
+    const step: *Vertex(Str) = try q.addVertex("StateStep","Step", opt);
+    step.print();
+    const wait: *Vertex(Str) = try q.addVertex("StateWait","Wait", opt);
+    wait.print();
+    const errors: *Vertex(Str) = try q.addVertex("StateError", "Error", opt);
+    errors.print();
+    const input: *Vertex(Str) = try q.addVertex("StateInput", "Input", opt);
+    input.print();
+    const end: *Vertex(Str) = try q.addVertex("StateEnd", "End", opt);
+    end.print();
+
+    q.printV();
+
+    _ = try q.addEdge(start, wait, "EnterStandby");
+    _ = try q.addEdge(input, step, "ProcessInput");
+    _ = try q.addEdge(step,wait, "StepComplete");
+    _ = try q.addEdge(wait, input, "TakeInput");
+    _ = try q.addEdge(input,wait, "Standby");
+    _ = try q.addEdge(wait,wait, "Standby");
+    _ = try q.addEdge(step, errors, "ProcessError");
+    _ = try q.addEdge(errors, wait, "Standby");
+    _ = try q.addEdge(input, errors, "ProcessError");
+    _ = try q.addEdge(input, end, "FinishExecuting");
+    _ = try q.addEdge(step, end, "FinishExecuting");
+
+    q.printV();
+    q.printE();
+    input.relations();
+    q.print();    
+}
+
 test "Family" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var ally = gpa.allocator();
@@ -383,67 +429,37 @@ test "Family" {
 
     q.print();
 
-    _ = try q.addEdge(jim_vertex, sue_v, "Mom");
-    _ = try q.addEdge(jim_vertex, bob_v, "Dad");
+    _ = try q.addEdge(jim_vertex, sue_v, "Jim's Mom");
+    _ = try q.addEdge(jim_vertex, bob_v, "Jim's Dad");
 
-    _ = try q.addEdge(jim_vertex, pete_v, "First Brother");
-    _ = try q.addEdge(jim_vertex, dave_v, "Second Brother");
-    _ = try q.addEdge(jim_vertex, chad_v, "Cousin");
+    _ = try q.addEdge(jim_vertex, pete_v, "Jim's First Brother");
+    _ = try q.addEdge(jim_vertex, dave_v, "Jim's Second Brother");
+    _ = try q.addEdge(jim_vertex, chad_v, "Jim's Cousin");
     
-    _ = try q.addEdge(jim_vertex, nate_v, "Grandfather");
-    _ = try q.addEdge(jim_vertex, val_v, "Wife");
-    _ = try q.addEdge(jim_vertex, jim_vertex, "Self");
+    _ = try q.addEdge(jim_vertex, nate_v, "Jim's Grandfather");
+    _ = try q.addEdge(jim_vertex, val_v, "Jim's Wife");
+    _ = try q.addEdge(jim_vertex, jim_vertex, "Jim's Self");
 
-    _ = try q.addEdge(jim_vertex, jim_vertex, "Evil Twin");
+    _ = try q.addEdge(jim_vertex, jim_vertex, "Jim's Evil Twin");
     
     q.print();
     jim_vertex.relations();
 
-    try q.removeEdgeByLabel("Evil Twin");
+    try q.removeEdgeByLabel("xJim's Evil Twin");
     jim_vertex.relations();
 
-}
 
-test "Family Factory" {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    var ally = gpa.allocator();
-    defer _ = gpa.deinit();
+    _ = try q.addEdge(sue_v, sue_v, "Mom");
+    _ = try q.addEdge(sue_v, bob_v, "Dad");
 
-    const PersonQuiver = Quiver(Person());
-
-    var q = PersonQuiver.init(&ally);
-    defer q.deinit();
-
-    var jim = Person().init("Jim", 24, ally);
-    defer jim.deinit();
-    const jim_v = try q.addVertex(jim, jim.name, 0);
-    _ = jim_v;
-
-    const family: [7][]const u8 = .{
-        "Sue",
-        "Bob",
-        "Pete",
-        "Dave",
-        "Nate",
-        "Chad",
-        "Val",
-    };
-
-    const ages: [7]u8 = .{
-        47,
-        48,
-        20,
-        18,
-        24,
-        88,
-        25,
-    };
-
-    var i: usize = 0;
-    while (i < family.len) {
-
-    }
+    _ = try q.addEdge(sue_v, pete_v, "First Brother");
+    _ = try q.addEdge(sue_v, dave_v, "Second Brother");
+    _ = try q.addEdge(sue_v, chad_v, "Cousin");
     
-    q.print();
+    _ = try q.addEdge(sue_v, nate_v, "Grandfather");
+    _ = try q.addEdge(sue_v, val_v, "Wife");
+    _ = try q.addEdge(sue_v, sue_v, "Self");
+
+    _ = try q.addEdge(sue_v, sue_v, "Evil Twin");
 
 }
