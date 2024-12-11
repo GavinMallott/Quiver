@@ -3,6 +3,8 @@ const std = @import("std");
 const List = std.ArrayList;
 const Map = std.AutoHashMap;
 const Dict = std.StringHashMap;
+const Queue = std.PriorityQueue;
+const Dequeue = std.PriorityDequeue;
 
 const Str = []const u8;
 
@@ -30,8 +32,7 @@ pub fn Vertex(comptime T: type) type {
         }
 
         pub fn print(self: *@This()) void {
-            std.debug.print("Vertex: {s}", .{self.repr});
-            std.debug.print("\n", .{});
+            std.debug.print("Vertex: {s}\n", .{self.repr});
         }
 
         pub fn relations(self: *@This()) void {
@@ -39,6 +40,7 @@ pub fn Vertex(comptime T: type) type {
             for (self.outgoing.items) |relation| {
                 std.debug.print("-> {s}, {s}\n", .{relation.to.repr, relation.label});
             }
+            std.debug.print("\n", .{});
         }
 
         pub fn removeEdge(self: *@This(), edge: *Edge(T)) !void {
@@ -73,7 +75,7 @@ pub fn Edge(comptime T: type) type {
         label: Str,
 
         pub fn init(allocator: *std.mem.Allocator, from: *Vertex(T), to: *Vertex(T), label: Str) !@This() {
-            return @This(){ 
+            return @This(){
                 .from = from,
                 .to = to,
                 .label = try allocator.dupe(u8, label),
@@ -109,18 +111,18 @@ pub fn Edge(comptime T: type) type {
     };
 }
 
-pub fn Quiver(comptime T: type) type {
+pub fn Quiver(comptime T: type, comptime M: type) type {
     return struct {
         const Self = @This();
         
-        verticies: Map(*Vertex(T), u8),
+        verticies: Map(*Vertex(T), M),
         edges: List(*Edge(T)),
         allocator: *std.mem.Allocator,
 
         pub fn init(allocator: *std.mem.Allocator) Self {
             return .{
                 .allocator = allocator,
-                .verticies = Map(*Vertex(T), u8).init(allocator.*),
+                .verticies = Map(*Vertex(T), M).init(allocator.*),
                 .edges = List(*Edge(T)).init(allocator.*),
             };
         }
@@ -178,7 +180,7 @@ pub fn Quiver(comptime T: type) type {
             std.debug.print("\n", .{});
         }
 
-        pub fn addVertex(self: *Self, value: T, repr: Str, opt: u8) !*Vertex(T) {
+        pub fn addVertex(self: *Self, value: T, repr: Str, opt: M) !*Vertex(T) {
             const vertex = try self.allocator.create(Vertex(T));
             vertex.* = try Vertex(T).init(self.allocator, value, repr);
             try self.verticies.put(vertex, opt);
@@ -187,7 +189,7 @@ pub fn Quiver(comptime T: type) type {
 
         pub fn removeVertex(self: *Self, vertex: *Vertex(T)) !void {
             var it = self.verticies.iterator();
-            var temp_map = Map(*Vertex((T)), u8).init(self.allocator.*);
+            var temp_map = Map(*Vertex((T)), M).init(self.allocator.*);
             while(it.next()) |v| {
                 if (v.key_ptr.* != vertex) {
                     try temp_map.put(v.key_ptr.*, v.value_ptr.*);
@@ -207,9 +209,17 @@ pub fn Quiver(comptime T: type) type {
                 }
             }
 
-
             vertex.deinit();
             self.allocator.destroy(vertex);
+        }
+
+        pub fn addEdge(self: *Self, from: *Vertex(T), to: *Vertex(T), label: Str) !*Edge(T) {
+            const edge: *Edge(T) = try self.allocator.create(Edge(T));
+            edge.* = try Edge(T).init(self.allocator, from, to, label);
+            try self.edges.append(edge);
+            try from.outgoing.append(edge);
+            try to.incoming.append(edge);
+            return edge;
         }
 
         pub fn removeEdge(self: *Self, edge: *Edge(T)) !void {
@@ -239,15 +249,6 @@ pub fn Quiver(comptime T: type) type {
             } else {
                 try self.removeEdge(edge_to_remove.?);
             }
-        }
-
-        pub fn addEdge(self: *Self, from: *Vertex(T), to: *Vertex(T), label: Str) !*Edge(T) {
-            const edge: *Edge(T) = try self.allocator.create(Edge(T));
-            edge.* = try Edge(T).init(self.allocator, from, to, label);
-            try self.edges.append(edge);
-            try from.outgoing.append(edge);
-            try to.incoming.append(edge);
-            return edge;
         }
     };
 }
@@ -292,7 +293,7 @@ test "Basic Impl" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var ally = gpa.allocator();
     defer _ = gpa.deinit();
-    var q = Quiver(Str).init(&ally);
+    var q = Quiver(Str, u8).init(&ally);
     defer q.deinit();
 
     const opt: u8 = 0;
@@ -347,7 +348,7 @@ test "State Machine" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var ally = gpa.allocator();
     defer _ = gpa.deinit();
-    var q = Quiver(Str).init(&ally);
+    var q = Quiver(Str, u8).init(&ally);
     defer q.deinit();
 
     const opt: u8 = 0;
@@ -393,7 +394,7 @@ test "Family" {
     var jim = Person().init("Jim", 24, ally);
     defer jim.deinit();
 
-    const PersonQuiver = Quiver(Person());
+    const PersonQuiver = Quiver(Person(), usize);
 
     var q = PersonQuiver.init(&ally);
     defer q.deinit();
@@ -429,6 +430,7 @@ test "Family" {
 
     q.print();
 
+    //Jim's Relationships
     _ = try q.addEdge(jim_vertex, sue_v, "Jim's Mom");
     _ = try q.addEdge(jim_vertex, bob_v, "Jim's Dad");
 
@@ -442,24 +444,226 @@ test "Family" {
 
     _ = try q.addEdge(jim_vertex, jim_vertex, "Jim's Evil Twin");
     
-    q.print();
+
     jim_vertex.relations();
 
     try q.removeEdgeByLabel("xJim's Evil Twin");
     jim_vertex.relations();
 
 
-    _ = try q.addEdge(sue_v, sue_v, "Mom");
-    _ = try q.addEdge(sue_v, bob_v, "Dad");
+    //Sue's Relationships
+    _ = try q.addEdge(sue_v, sue_v, "Sue's Self");
+    _ = try q.addEdge(sue_v, bob_v, "Sue's Husband");
 
-    _ = try q.addEdge(sue_v, pete_v, "First Brother");
-    _ = try q.addEdge(sue_v, dave_v, "Second Brother");
-    _ = try q.addEdge(sue_v, chad_v, "Cousin");
+    _ = try q.addEdge(sue_v, jim_vertex, "Sue's First Son");
+    _ = try q.addEdge(sue_v, pete_v, "Sue's Second Son");
+    _ = try q.addEdge(sue_v, dave_v, "Sue's Third Son");
+    _ = try q.addEdge(sue_v, chad_v, "Sue's Brother's Son");
     
-    _ = try q.addEdge(sue_v, nate_v, "Grandfather");
-    _ = try q.addEdge(sue_v, val_v, "Wife");
-    _ = try q.addEdge(sue_v, sue_v, "Self");
+    _ = try q.addEdge(sue_v, nate_v, "Sue's Father-in-law");
+    _ = try q.addEdge(sue_v, val_v, "Sue's Daughter-in-law");
+    _ = try q.addEdge(sue_v, sue_v, "Sue's Self");
 
-    _ = try q.addEdge(sue_v, sue_v, "Evil Twin");
+    _ = try q.addEdge(sue_v, sue_v, "Sue's Evil Twin");
 
+    sue_v.relations();
+
+    try q.removeEdgeByLabel("Sue's Evil Twin");
+    sue_v.relations();
+
+
+    //Bob's Relationships
+    _ = try q.addEdge(bob_v, sue_v, "Bob's Wife");
+    _ = try q.addEdge(bob_v, bob_v, "Bob's Self");
+
+    _ = try q.addEdge(bob_v, jim_vertex, "Bob's First Son");
+    _ = try q.addEdge(bob_v, pete_v, "Bob's Second Son");
+    _ = try q.addEdge(bob_v, dave_v, "Bob's Third Son");
+    _ = try q.addEdge(bob_v, chad_v, "Bob's Brother-in-law's Son");
+    
+    _ = try q.addEdge(bob_v, nate_v, "Bob's Father");
+    _ = try q.addEdge(bob_v, val_v, "Bob's Daughter-in-law");
+
+    _ = try q.addEdge(bob_v, bob_v, "Bob's Evil Twin");
+
+    bob_v.relations();
+
+    try q.removeEdgeByLabel("Bob's Evil Twin");
+    bob_v.relations();
+
+    q.print();
+}
+
+test "Labeled Machine" {
+    const EdgeType = enum(u8) {
+        ENTER_STANDBY = 0b00000000,
+        PROCESS_INPUT = 0b00000001,
+        STEP_COMPLETE = 0b00000010,
+        STANDBY = 0b00000100,
+        TAKE_INPUT = 0b00001000,
+        PROCESS_ERROR = 0b00010000,
+        FINISH_EXECUTING = 0b00100000,
+
+        None = 0b11111111,
+    };
+
+    const VertexType = enum(u8) {
+        START = 0b00000001,
+        STEP = 0b00000010,
+        WAIT = 0b00000100,
+        ERROR = 0b00001000,
+        INPUT = 0b00010000,
+        END = 0b00100000,
+
+        None = 0b11111111,
+    };
+
+    const State = struct {
+        state: VertexType,
+        edges: u8, 
+    };
+
+    const START_STATE = State{
+        .state = VertexType.START,
+        .edges = @intFromEnum(EdgeType.ENTER_STANDBY),
+    };
+    const INPUT_STATE = State{
+        .state = VertexType.INPUT,
+        .edges = @intFromEnum(EdgeType.PROCESS_INPUT) & @intFromEnum(EdgeType.PROCESS_ERROR) & @intFromEnum(EdgeType.FINISH_EXECUTING),
+    };
+    const WAIT_STATE = State{
+        .state = VertexType.WAIT,
+        .edges = @intFromEnum(EdgeType.STANDBY) & @intFromEnum(EdgeType.TAKE_INPUT),
+    };
+    const STEP_STATE = State{
+        .state = VertexType.STEP,
+        .edges = @intFromEnum(EdgeType.STEP_COMPLETE) & @intFromEnum(EdgeType.PROCESS_ERROR) & @intFromEnum(EdgeType.PROCESS_INPUT) & @intFromEnum(EdgeType.FINISH_EXECUTING),
+    };
+    const ERROR_STATE = State{
+        .state = VertexType.ERROR,
+        .edges = @intFromEnum(EdgeType.STANDBY),
+    };
+    const END_STATE = State{
+        .state = VertexType.END,
+        .edges = @intFromEnum(EdgeType.None),
+    };
+
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var ally = gpa.allocator();
+    defer _ = gpa.deinit();
+
+    var q = Quiver(State, u8).init(&ally);
+    defer q.deinit();
+
+    const start: *Vertex(State) = try q.addVertex(START_STATE, "Start", START_STATE.edges);
+    //start.print();
+    const step: *Vertex(State) = try q.addVertex(STEP_STATE, "Step", STEP_STATE.edges); 
+    //step.print();
+    const wait: *Vertex(State) = try q.addVertex(WAIT_STATE, "Wait", WAIT_STATE.edges);
+    //wait.print();
+    const errors: *Vertex(State) = try q.addVertex(ERROR_STATE, "Error", ERROR_STATE.edges);
+    //errors.print();
+    const input: *Vertex(State) = try q.addVertex(INPUT_STATE, "Input", INPUT_STATE.edges);
+    //input.print();
+    const end: *Vertex(State) = try q.addVertex(END_STATE, "End", END_STATE.edges);
+    //end.print();
+
+    //q.printV();
+
+    var EdgeLabel = Map(EdgeType, Str).init(ally);
+    defer EdgeLabel.deinit();
+    try EdgeLabel.put(EdgeType.ENTER_STANDBY, "Enter Standby");
+    try EdgeLabel.put(EdgeType.PROCESS_INPUT, "Process Input");
+    try EdgeLabel.put(EdgeType.STEP_COMPLETE, "Step Complete");
+    try EdgeLabel.put(EdgeType.TAKE_INPUT, "Take Input");
+    try EdgeLabel.put(EdgeType.STANDBY, "Standby");
+    try EdgeLabel.put(EdgeType.PROCESS_ERROR, "Process Error");
+    try EdgeLabel.put(EdgeType.FINISH_EXECUTING, "Finish Executing");
+
+    _ = try q.addEdge(start, wait, EdgeLabel.get(EdgeType.ENTER_STANDBY).?);
+    _ = try q.addEdge(input, step, EdgeLabel.get(EdgeType.PROCESS_INPUT).?);
+    _ = try q.addEdge(step,wait, EdgeLabel.get(EdgeType.STEP_COMPLETE).?);
+    _ = try q.addEdge(wait, input, EdgeLabel.get(EdgeType.TAKE_INPUT).?);
+    _ = try q.addEdge(input,wait, EdgeLabel.get(EdgeType.STANDBY).?);
+    _ = try q.addEdge(wait,wait,  EdgeLabel.get(EdgeType.STANDBY).?);
+    _ = try q.addEdge(step, errors, EdgeLabel.get(EdgeType.PROCESS_ERROR).?);
+    _ = try q.addEdge(errors, wait, EdgeLabel.get(EdgeType.STANDBY).?);
+    _ = try q.addEdge(input, errors, EdgeLabel.get(EdgeType.PROCESS_ERROR).?);
+    _ = try q.addEdge(input, end, EdgeLabel.get(EdgeType.FINISH_EXECUTING).?);
+    _ = try q.addEdge(step, end, EdgeLabel.get(EdgeType.FINISH_EXECUTING).?);
+
+    q.printV();
+    q.printE();
+    input.relations();
+    q.print();    
+
+}
+
+test "Workflow" {
+    const Priority = enum(u3) {
+        LOWEST = 0,     //0b000
+        LOWER = 1,      //0b001
+        LOW = 2,        //0b010
+        NEUTRAL = 3,    //0b011
+        HIGH = 4,       //0b100
+        HIGHER = 5,     //0b101
+        HIGHEST = 6,    //0b110
+        MANUAL = 7,     //0b111
+    };
+
+    const Progress = enum(u2) {
+        NOT_STARTED = 0b00,
+        IN_PROGRESS = 0b01,
+        ON_HOLD = 0b10,
+        DONE = 0b11,
+    };
+
+    const Task = struct {
+        name: Str,
+        desc: Str,
+        priority: Priority,
+        progress: Progress,
+    };
+
+    const Sequence = struct {
+        name: Str,
+        desc: Str,
+        priority: Priority,
+        progress: Progress,
+
+        task_next: ?*Task,
+    };
+
+    const Story = struct {
+        name: Str,
+        desc: Str,
+        priority: Priority,
+        progress: Progress,
+
+        task_pool: []*Task,
+    };
+
+    const Epic = struct {
+        name: Str,
+        desc: Str,
+        priority: Priority,
+        progress: Progress,
+
+        sequence_pool: []*Sequence,
+        story_pool: []*Story,
+    };
+
+    const Backlog = struct {
+        epic_pool: []*Epic,
+    };
+
+    const Sprint = struct {
+        task_pool: []*Task,
+    };
+
+    const JiraBoard = struct {
+        allocator: *std.mem.allocator,
+        backlog: *Backlog,
+        current_sprint: *Sprint,
+    };
 }
